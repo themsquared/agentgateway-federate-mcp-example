@@ -253,10 +253,13 @@ laptop would claim `iss=http://localhost:8081` and be rejected.
 **Policies propagate through xDS.** Allow a few seconds after `kubectl apply`
 before testing. `demo.sh` builds this in.
 
-**Namespace discovery.** If you install agentgateway yourself with
-`discoveryNamespaceSelectors`, label the `mcp-federation` namespace to match or
-the Gateway will sit at `Waiting for controller` forever. `setup.sh` installs
-without a selector.
+**Namespace discovery.** If agentgateway was already installed with
+`discoveryNamespaceSelectors` — common when reusing a cluster that runs other
+demos — its controller ignores namespaces that do not match, and the Gateway sits
+at `Waiting for controller` with no obvious cause. `setup.sh` detects this and
+labels the namespace automatically; if the selector uses `matchExpressions`
+rather than `matchLabels` it warns instead, since that needs a human decision.
+Its own install sets no selector.
 
 **Quota units are HTTP requests,** not tool calls. One MCP session spends a few
 (initialize, `tools/list`, then one per call), which is why the trial tier trips

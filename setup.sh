@@ -156,6 +156,36 @@ header "MCP servers, identity providers and policies"
 
 kubectl apply -f "${MANIFESTS}/00-namespace.yaml"
 
+# If agentgateway was installed with discoveryNamespaceSelectors (common on a
+# shared cluster that already runs other demos), its controller ignores every
+# namespace that does not match — and a Gateway here would sit at "Waiting for
+# controller" until the timeout with no obvious cause. Detect that and label the
+# namespace so it is discovered.
+SELECTORS="$(kubectl get deploy enterprise-agentgateway -n "${AGW_NS}" \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AGW_DISCOVERY_NAMESPACE_SELECTORS")].value}' 2>/dev/null || true)"
+if [ -n "${SELECTORS}" ] && [ "${SELECTORS}" != "[]" ]; then
+  LABELS="$(printf '%s' "${SELECTORS}" | python3 -c '
+import json, sys
+try:
+    sel = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+# Only matchLabels can be satisfied by labelling; matchExpressions needs a human.
+print(" ".join(f"{k}={v}" for entry in sel for k, v in (entry.get("matchLabels") or {}).items()))
+' 2>/dev/null || true)"
+  if [ -n "${LABELS}" ]; then
+    warn "agentgateway restricts discovery to selected namespaces."
+    info "  labelling ${DEMO_NS} with: ${LABELS}"
+    # shellcheck disable=SC2086
+    kubectl label namespace "${DEMO_NS}" ${LABELS} --overwrite >/dev/null
+    ok "namespace is discoverable by the controller"
+  else
+    warn "agentgateway uses discoveryNamespaceSelectors that cannot be satisfied by"
+    warn "labels alone (${SELECTORS}). If the Gateway never programs, make sure the"
+    warn "'${DEMO_NS}' namespace matches that selector."
+  fi
+fi
+
 # The six MCP servers all run the same file from mcp-server/server.py. Shipping
 # it as a real file (rather than pasted into a YAML string) means you can read
 # it, edit it, and run it locally — and there is exactly one copy of it.
