@@ -1,0 +1,33 @@
+# Entitlement contract for the SUPPORT federation.
+#
+# Initech is the interesting case here. It is the smallest account and has no
+# billing access at all, yet it can open support tickets — the three tools a
+# trial customer actually needs. Entitlements are per domain, not one global
+# level applied everywhere.
+#
+# crm.delete_customer (GDPR erasure) is granted to nobody.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: support-entitlements
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: mcp-support
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          # ── Acme (enterprise) — full ticketing + CRM, no record deletion ─────
+          - 'jwt.company == "acme" && mcp.tool.target == "tickets" && mcp.tool.name in ["get_ticket", "search_tickets", "create_ticket", "escalate_ticket", "close_ticket"]'
+          - 'jwt.company == "acme" && mcp.tool.target == "crm" && mcp.tool.name in ["get_customer", "search_customers", "list_contracts", "update_customer"]'
+
+          # ── Globex (standard) — no support entitlement ───────────────────────
+          # Globex runs its own helpdesk and never bought this domain.
+
+          # ── Initech (trial) — can raise and track tickets, no CRM access ─────
+          - 'jwt.company == "initech" && mcp.tool.target == "tickets" && mcp.tool.name in ["get_ticket", "search_tickets", "create_ticket"]'

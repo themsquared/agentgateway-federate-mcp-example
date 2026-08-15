@@ -1,0 +1,8 @@
+# Everything this demo owns lives in one namespace, so teardown is a single
+# delete and nothing leaks into the agentgateway install itself.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-federation
+  labels:
+    app.kubernetes.io/part-of: agentgateway-mcp-federation-demo

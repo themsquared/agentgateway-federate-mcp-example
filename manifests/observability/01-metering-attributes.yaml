@@ -1,0 +1,47 @@
+# Metering: make usage attributable to a paying customer.
+#
+# agentgateway already counts MCP traffic out of the box. Its metric
+# `agentgateway_mcp_requests_total` carries:
+#
+#   method    tools/call, tools/list, initialize, ...
+#   server    which federated MCP server handled it (payments, reporting, ...)
+#   resource  which tool was invoked (get_payment, export_dataset, ...)
+#   route     which federated domain it came through (mcp-billing, ...)
+#
+# What it does NOT carry by default is WHO called. Without that you can see the
+# platform is busy but cannot bill anyone for it.
+#
+# This policy adds the missing dimension by lifting claims off the validated JWT
+# and onto the metric as labels. After this, every counter is broken out by
+# paying customer, and a chargeback report is a single PromQL query:
+#
+#   sum by (company, server, resource) (
+#     agentgateway_mcp_requests_total{method="tools/call"}
+#   )
+#
+# Cardinality note: `company` and `tier` are safe labels because their value sets
+# are small and bounded — one per customer, one per plan. Adding something like
+# jwt.sub (a distinct value per user or session) would multiply your time series
+# by your user count and is how metrics backends get into trouble. Meter on the
+# billable entity, not on the individual caller.
+#
+# These labels land on the request metrics generally, not just MCP — so the same
+# breakdown is available for bytes and latency, not only call counts.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: chargeback-metrics
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-federation-gateway
+  frontend:
+    metrics:
+      attributes:
+        add:
+        - name: company
+          expression: jwt.company
+        - name: tier
+          expression: jwt.tier

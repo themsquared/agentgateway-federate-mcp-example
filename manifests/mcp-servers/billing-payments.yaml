@@ -1,0 +1,183 @@
+# Billing domain → Payments MCP server.
+#
+# One of two servers federated behind the /mcp/billing endpoint. Runs a stock
+# python:3.12-alpine image: the server code comes from the `mcp-server-code`
+# ConfigMap (created by setup.sh from mcp-server/server.py) and everything
+# server-specific — name, tools, schemas, fake responses — comes from the
+# tools.json ConfigMap below. No image build, no registry.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tools-payments
+  namespace: mcp-federation
+data:
+  tools.json: |
+    {
+      "server": "payments",
+      "displayName": "Payments API",
+      "version": "1.4.0",
+      "instructions": "Card and ACH payment processing for the billing platform.",
+      "tools": [
+        {
+          "name": "get_payment",
+          "description": "Look up a single payment by ID, including its current settlement status.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "payment_id": { "type": "string", "description": "Payment identifier, e.g. pay_10482" } },
+            "required": ["payment_id"]
+          },
+          "response": {
+            "payment_id": "{payment_id}",
+            "amount_cents": 48200,
+            "currency": "USD",
+            "status": "settled",
+            "method": "card",
+            "card_brand": "visa",
+            "last4": "4242",
+            "settled_at": "{today}T14:22:07Z"
+          }
+        },
+        {
+          "name": "list_payment_methods",
+          "description": "List the stored payment methods on a customer account.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "customer_id": { "type": "string", "description": "Customer identifier, e.g. cus_8891" } },
+            "required": ["customer_id"]
+          },
+          "response": {
+            "customer_id": "{customer_id}",
+            "payment_methods": [
+              { "id": "pm_{id}", "type": "card", "brand": "visa", "last4": "4242", "default": true },
+              { "id": "pm_ach_01", "type": "us_bank_account", "bank": "Wells Fargo", "last4": "6789", "default": false }
+            ]
+          }
+        },
+        {
+          "name": "create_charge",
+          "description": "Charge a customer's default payment method. Moves money — write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "customer_id": { "type": "string" },
+              "amount_cents": { "type": "integer" },
+              "currency": { "type": "string", "default": "USD" },
+              "description": { "type": "string" }
+            },
+            "required": ["customer_id", "amount_cents"]
+          },
+          "response": {
+            "charge_id": "ch_{id}",
+            "customer_id": "{customer_id}",
+            "amount_cents": "{amount_cents}",
+            "currency": "{currency}",
+            "status": "succeeded",
+            "created": "{today}"
+          }
+        },
+        {
+          "name": "refund_payment",
+          "description": "Refund a settled payment, in full or in part. Moves money — write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "payment_id": { "type": "string" },
+              "amount_cents": { "type": "integer", "description": "Omit for a full refund" },
+              "reason": { "type": "string" }
+            },
+            "required": ["payment_id"]
+          },
+          "response": {
+            "refund_id": "re_{id}",
+            "payment_id": "{payment_id}",
+            "amount_cents": "{amount_cents}",
+            "status": "pending",
+            "reason": "{reason}",
+            "expected_settlement": "{next_month}"
+          }
+        },
+        {
+          "name": "void_transaction",
+          "description": "Void an authorized-but-uncaptured transaction. Irreversible — privileged operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "transaction_id": { "type": "string" } },
+            "required": ["transaction_id"]
+          },
+          "response": {
+            "transaction_id": "{transaction_id}",
+            "status": "voided",
+            "voided_at": "{today}T09:15:00Z"
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-payments
+  namespace: mcp-federation
+  labels:
+    app: mcp-payments
+    mcp-domain: billing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-payments
+  template:
+    metadata:
+      labels:
+        app: mcp-payments
+        mcp-domain: billing
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-alpine
+        command: ["python3", "/app/server.py"]
+        env:
+        - name: TOOLS_FILE
+          value: /etc/mcp/tools.json
+        - name: PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: tools
+          mountPath: /etc/mcp
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      volumes:
+      - name: code
+        configMap:
+          name: mcp-server-code
+      - name: tools
+        configMap:
+          name: mcp-tools-payments
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-payments
+  namespace: mcp-federation
+  labels:
+    app: mcp-payments
+    mcp-domain: billing
+spec:
+  selector:
+    app: mcp-payments
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080

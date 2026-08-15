@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Price book for the chargeback report. Rates are USD per MCP tool call.",
+    "Keys are '<server>.<tool>' using the ORIGIN server and tool names — the same",
+    "names the authorization rules in manifests/security/ match on.",
+    "",
+    "The point of a price book is that not every call is worth the same. A funnel",
+    "query costs real warehouse compute; a bulk dataset export costs compute plus",
+    "egress; reading a cached invoice costs almost nothing. Metering per call and",
+    "pricing per tool lets the rate card reflect that instead of averaging it away.",
+    "",
+    "Edit freely — chargeback.py re-reads this file on every run."
+  ],
+
+  "default": 0.002,
+
+  "overrides": {
+    "payments.create_charge": 0.02,
+    "payments.refund_payment": 0.02,
+    "payments.void_transaction": 0.02,
+
+    "invoicing.create_invoice": 0.01,
+    "invoicing.send_invoice_reminder": 0.015,
+    "invoicing.void_invoice": 0.01,
+
+    "reporting.run_report": 0.05,
+    "reporting.schedule_report": 0.01,
+    "reporting.export_dataset": 0.25,
+
+    "telemetry.query_events": 0.01,
+    "telemetry.get_funnel": 0.02,
+    "telemetry.get_retention": 0.02,
+    "telemetry.purge_events": 0.05,
+
+    "tickets.create_ticket": 0.005,
+    "tickets.escalate_ticket": 0.01,
+    "tickets.close_ticket": 0.005,
+
+    "crm.update_customer": 0.005,
+    "crm.delete_customer": 0.01
+  }
+}

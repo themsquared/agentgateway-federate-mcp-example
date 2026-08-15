@@ -1,0 +1,181 @@
+# Support domain → CRM MCP server. Federated behind /mcp/support together with
+# the Tickets server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tools-crm
+  namespace: mcp-federation
+data:
+  tools.json: |
+    {
+      "server": "crm",
+      "displayName": "Customer Records API",
+      "version": "5.6.1",
+      "instructions": "Customer master data — accounts, contacts, and contract terms.",
+      "tools": [
+        {
+          "name": "get_customer",
+          "description": "Retrieve a customer account record.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "customer_id": { "type": "string", "description": "e.g. cus_8891" } },
+            "required": ["customer_id"]
+          },
+          "response": {
+            "customer_id": "{customer_id}",
+            "name": "Northwind Logistics",
+            "plan": "enterprise",
+            "status": "active",
+            "owner": "dana.kim@sales.example.com",
+            "since": "2023-02-14",
+            "primary_contact": { "name": "Alex Chen", "email": "alex.chen@northwind.example.com" },
+            "mrr_usd": 34500
+          }
+        },
+        {
+          "name": "search_customers",
+          "description": "Search customer accounts by name, plan, or status.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string" },
+              "plan": { "type": "string", "enum": ["trial", "standard", "enterprise"] },
+              "limit": { "type": "integer", "default": 20 }
+            }
+          },
+          "response": {
+            "query": "{query}",
+            "total": 3,
+            "customers": [
+              { "customer_id": "cus_8891", "name": "Northwind Logistics", "plan": "enterprise", "mrr_usd": 34500 },
+              { "customer_id": "cus_4412", "name": "Contoso Health", "plan": "standard", "mrr_usd": 8900 },
+              { "customer_id": "cus_1174", "name": "Fabrikam Retail", "plan": "trial", "mrr_usd": 0 }
+            ]
+          }
+        },
+        {
+          "name": "list_contracts",
+          "description": "List contract terms and renewal dates for a customer.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "customer_id": { "type": "string" } },
+            "required": ["customer_id"]
+          },
+          "response": {
+            "customer_id": "{customer_id}",
+            "contracts": [
+              { "contract_id": "con_2024_881", "term_months": 36, "acv_usd": 414000, "renews": "2027-02-14", "auto_renew": true },
+              { "contract_id": "con_2023_402", "term_months": 12, "acv_usd": 128000, "renews": "expired", "auto_renew": false }
+            ]
+          }
+        },
+        {
+          "name": "update_customer",
+          "description": "Update fields on a customer account record. Write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "customer_id": { "type": "string" },
+              "field": { "type": "string" },
+              "value": { "type": "string" }
+            },
+            "required": ["customer_id", "field", "value"]
+          },
+          "response": {
+            "customer_id": "{customer_id}",
+            "updated_field": "{field}",
+            "new_value": "{value}",
+            "updated_at": "{today}T13:20:00Z",
+            "updated_by": "mcp-agent"
+          }
+        },
+        {
+          "name": "delete_customer",
+          "description": "Permanently delete a customer record and all related data (GDPR erasure). Irreversible — privileged operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "customer_id": { "type": "string" },
+              "confirmation": { "type": "string", "description": "Must equal the customer_id to proceed" }
+            },
+            "required": ["customer_id", "confirmation"]
+          },
+          "response": {
+            "customer_id": "{customer_id}",
+            "status": "deleted",
+            "records_removed": 14822,
+            "irreversible": true,
+            "deleted_at": "{today}T13:44:00Z"
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-crm
+  namespace: mcp-federation
+  labels:
+    app: mcp-crm
+    mcp-domain: support
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-crm
+  template:
+    metadata:
+      labels:
+        app: mcp-crm
+        mcp-domain: support
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-alpine
+        command: ["python3", "/app/server.py"]
+        env:
+        - name: TOOLS_FILE
+          value: /etc/mcp/tools.json
+        - name: PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: tools
+          mountPath: /etc/mcp
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      volumes:
+      - name: code
+        configMap:
+          name: mcp-server-code
+      - name: tools
+        configMap:
+          name: mcp-tools-crm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-crm
+  namespace: mcp-federation
+  labels:
+    app: mcp-crm
+    mcp-domain: support
+spec:
+  selector:
+    app: mcp-crm
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080

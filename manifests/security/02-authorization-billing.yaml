@@ -1,0 +1,54 @@
+# Step 2 of authn/authz: decide what an authenticated caller may actually do.
+#
+# This is the entitlement contract for the BILLING federation, in git, reviewable
+# in a pull request. Each expression grants one company access to one server's
+# tools. Expressions are OR'd: a request is allowed if ANY of them matches, and
+# denied if none do.
+#
+# Two things to know about the CEL variables, because they are easy to get wrong:
+#
+#   mcp.tool.name   is the RAW tool name as the origin server defines it —
+#                   "get_payment", NOT the federated "payments_get_payment" the
+#                   client sees. The prefix is presentation; policy matches the
+#                   real name.
+#   mcp.tool.target is the target name from the AgentgatewayBackend — "payments",
+#                   "invoicing". You need it: without it a rule allowing
+#                   "get_invoice" would also allow a tool of the same name on any
+#                   other server in the federation.
+#
+# Enforcement covers BOTH directions. tools/list is filtered to what the caller
+# may use, and a tools/call for anything else is rejected as "Unknown tool" —
+# a caller cannot even confirm that a tool it lacks rights to exists.
+#
+# Note what nobody has: payments.void_transaction and invoicing.void_invoice are
+# implemented and running on the servers, and no company can reach them. The
+# gateway is the only thing between "the capability exists" and "someone can
+# invoke it".
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: billing-entitlements
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: mcp-billing
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          # ── Acme (enterprise) — full billing operations, no voids ────────────
+          - 'jwt.company == "acme" && mcp.tool.target == "payments" && mcp.tool.name in ["get_payment", "list_payment_methods", "create_charge", "refund_payment"]'
+          - 'jwt.company == "acme" && mcp.tool.target == "invoicing" && mcp.tool.name in ["get_invoice", "list_invoices", "create_invoice", "send_invoice_reminder"]'
+
+          # ── Globex (standard) — read-only billing; cannot move money ─────────
+          - 'jwt.company == "globex" && mcp.tool.target == "payments" && mcp.tool.name in ["get_payment", "list_payment_methods"]'
+          - 'jwt.company == "globex" && mcp.tool.target == "invoicing" && mcp.tool.name in ["get_invoice", "list_invoices"]'
+
+          # ── Initech (trial) — no billing entitlement at all ──────────────────
+          # Deliberately absent. Initech authenticates successfully and reaches
+          # this endpoint, then sees an empty tool list. Denial is the default;
+          # you grant access by adding a line, never by remembering to deny one.

@@ -1,0 +1,13 @@
+# Local secrets and overrides — never commit these.
+.env
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Scratch output
+*.log
+/tmp/

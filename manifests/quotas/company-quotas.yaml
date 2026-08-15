@@ -1,0 +1,92 @@
+# Per-company quotas, enforced fleet-wide.
+#
+# The RateLimitConfig below is a descriptor table: the gateway extracts a value
+# from each request and asks the rate-limit service "how many of these has this
+# key used this minute?". The extracted value here is the `company` claim from
+# the caller's JWT, so every company gets its own counter regardless of how many
+# agents, sessions, or source IPs it connects from.
+#
+# Global, not local. Counters live in the shared Redis that ships with the
+# enterprise install, so the quota is enforced across every gateway replica —
+# "5 per minute" means 5 per minute in total, not 5 per replica. That is the
+# difference between a quota you can put in a contract and a quota that quietly
+# multiplies by your replica count. (traffic.rateLimit.local is the per-replica
+# alternative; it needs no Redis but cannot make a fleet-wide promise.)
+#
+# The CEL expression is `jwt.company` — the same claim, in the same syntax, that
+# the authorization rules in manifests/security/ match on. One identity, read
+# once, used for both what you may call and how often.
+#
+# Quotas are deliberately small so they can be demonstrated in a live session.
+# Real numbers would be orders of magnitude larger; only the integers change.
+#
+# Counting: each unit is one HTTP request to the gateway. An MCP session spends
+# a few (initialize, tools/list, then one per tool call), so the trial tier trips
+# after a handful of operations — which is exactly what makes it demoable.
+apiVersion: ratelimit.solo.io/v1alpha1
+kind: RateLimitConfig
+metadata:
+  name: company-quotas
+  namespace: mcp-federation
+spec:
+  raw:
+    descriptors:
+    - key: company
+      value: acme
+      rateLimit:
+        requestsPerUnit: 600      # enterprise tier
+        unit: MINUTE
+    - key: company
+      value: globex
+      rateLimit:
+        requestsPerUnit: 60       # standard tier
+        unit: MINUTE
+    - key: company
+      value: initech
+      rateLimit:
+        # Trial tier, deliberately small so a live demo can exhaust it in one
+        # command (`scripts/mcp.py quota initech 25`). Sized with enough headroom
+        # that ordinary browsing — the entitlement matrix opens six sessions for
+        # this company — does not trip it by accident.
+        requestsPerUnit: 20
+        unit: MINUTE
+    # Catch-all: any company WITHOUT an explicit row above gets this limit.
+    # A descriptor with a key and no value matches any value of that key.
+    #
+    # This matters for onboarding. A partner you add tomorrow is rate-limited from
+    # its first request under its own counter, without anyone remembering to edit
+    # this file — the safe default is automatic, and an explicit row is only needed
+    # to give someone MORE than the default. Note the counter is still per company:
+    # two partners on the catch-all do not share a bucket, they each get 30/min.
+    - key: company
+      rateLimit:
+        requestsPerUnit: 30
+        unit: MINUTE
+    rateLimits:
+    - actions:
+      - cel:
+          expression: 'jwt.company'
+          key: company
+---
+# Attach the quota table to the gateway. Every route behind this gateway — all
+# three federated domains — is counted against the caller's company budget.
+#
+# This is an EnterpriseAgentgatewayPolicy (not AgentgatewayPolicy): global,
+# Redis-backed rate limiting is an enterprise feature, and `entRateLimit` is
+# where it lives. The rate-limit service and its Redis are installed by the
+# enterprise-agentgateway chart; nothing extra to deploy.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: company-quotas
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-federation-gateway
+  traffic:
+    entRateLimit:
+      global:
+        rateLimitConfigRefs:
+        - name: company-quotas

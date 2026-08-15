@@ -1,0 +1,99 @@
+# MCP federation — three business domains, three virtual MCP servers.
+#
+# Each AgentgatewayBackend below fans one MCP endpoint out across several real
+# MCP servers. A client connects ONCE and sees the union of the targets' tools.
+# This is the "federated business category" model: the consumer asks for
+# "billing", not for "the payments service and the invoicing service".
+#
+# Two settings matter for everything downstream:
+#
+#   prefixMode: Always
+#     Federated tools are exposed as <target>_<tool> — payments_create_charge,
+#     invoicing_void_invoice. Setting this explicitly means the tool names are
+#     stable and predictable, which is what the authorization rules in
+#     manifests/security/ match on. Leave it to default and a name can change
+#     out from under your policy.
+#
+#   static targets (not selectors)
+#     A `selector:` target derives its prefix from the discovered Service
+#     (e.g. mcp-payments-8080_create_charge). Static targets keep the `name:`
+#     you declare here, so the tool names in your policies are the tool names
+#     your consumers see. Predictable naming is worth the extra three lines.
+#
+#   failureMode: FailOpen
+#     If one target is down the federation still serves the healthy ones.
+#     FailClosed (the default) fails the whole session instead.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mcp-billing
+  namespace: mcp-federation
+  labels:
+    mcp-domain: billing
+spec:
+  mcp:
+    failureMode: FailOpen
+    prefixMode: Always
+    targets:
+    - name: payments
+      static:
+        host: mcp-payments.mcp-federation.svc.cluster.local
+        port: 80
+        path: /mcp
+        protocol: StreamableHTTP
+    - name: invoicing
+      static:
+        host: mcp-invoicing.mcp-federation.svc.cluster.local
+        port: 80
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mcp-analytics
+  namespace: mcp-federation
+  labels:
+    mcp-domain: analytics
+spec:
+  mcp:
+    failureMode: FailOpen
+    prefixMode: Always
+    targets:
+    - name: reporting
+      static:
+        host: mcp-reporting.mcp-federation.svc.cluster.local
+        port: 80
+        path: /mcp
+        protocol: StreamableHTTP
+    - name: telemetry
+      static:
+        host: mcp-telemetry.mcp-federation.svc.cluster.local
+        port: 80
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mcp-support
+  namespace: mcp-federation
+  labels:
+    mcp-domain: support
+spec:
+  mcp:
+    failureMode: FailOpen
+    prefixMode: Always
+    targets:
+    - name: tickets
+      static:
+        host: mcp-tickets.mcp-federation.svc.cluster.local
+        port: 80
+        path: /mcp
+        protocol: StreamableHTTP
+    - name: crm
+      static:
+        host: mcp-crm.mcp-federation.svc.cluster.local
+        port: 80
+        path: /mcp
+        protocol: StreamableHTTP

@@ -1,0 +1,180 @@
+# Analytics domain → Telemetry MCP server. Federated behind /mcp/analytics
+# together with the Reporting server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tools-telemetry
+  namespace: mcp-federation
+data:
+  tools.json: |
+    {
+      "server": "telemetry",
+      "displayName": "Product Telemetry API",
+      "version": "1.9.4",
+      "instructions": "Raw product event stream — funnels, retention, and event search.",
+      "tools": [
+        {
+          "name": "list_event_types",
+          "description": "List the product event types being collected, with 30-day volumes.",
+          "inputSchema": { "type": "object", "properties": {} },
+          "response": {
+            "event_types": [
+              { "name": "session_start", "volume_30d": 8412903 },
+              { "name": "feature_used", "volume_30d": 4120845 },
+              { "name": "checkout_completed", "volume_30d": 184203 },
+              { "name": "support_chat_opened", "volume_30d": 41209 }
+            ]
+          }
+        },
+        {
+          "name": "query_events",
+          "description": "Search the raw event stream with a filter expression.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "event_type": { "type": "string" },
+              "since": { "type": "string", "description": "ISO date, e.g. 2026-07-01" },
+              "limit": { "type": "integer", "default": 100 }
+            },
+            "required": ["event_type"]
+          },
+          "response": {
+            "event_type": "{event_type}",
+            "since": "{since}",
+            "matched": 18422,
+            "returned": 3,
+            "events": [
+              { "ts": "{today}T11:04:22Z", "account_id": "acct_2011", "properties": { "plan": "enterprise", "region": "us-east-1" } },
+              { "ts": "{today}T11:04:51Z", "account_id": "acct_8842", "properties": { "plan": "standard", "region": "eu-west-1" } },
+              { "ts": "{today}T11:05:09Z", "account_id": "acct_1174", "properties": { "plan": "trial", "region": "us-west-2" } }
+            ]
+          }
+        },
+        {
+          "name": "get_funnel",
+          "description": "Compute a conversion funnel across an ordered list of events.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "steps": { "type": "array", "items": { "type": "string" }, "description": "Ordered event names" },
+              "window_days": { "type": "integer", "default": 7 }
+            },
+            "required": ["steps"]
+          },
+          "response": {
+            "window_days": "{window_days}",
+            "steps": [
+              { "event": "session_start", "count": 412093, "conversion_pct": 100.0 },
+              { "event": "feature_used", "count": 188410, "conversion_pct": 45.7 },
+              { "event": "checkout_completed", "count": 21884, "conversion_pct": 5.3 }
+            ]
+          }
+        },
+        {
+          "name": "get_retention",
+          "description": "Cohort retention curve for accounts that started in a given period.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "cohort_month": { "type": "string", "description": "e.g. 2026-05" },
+              "weeks": { "type": "integer", "default": 8 }
+            },
+            "required": ["cohort_month"]
+          },
+          "response": {
+            "cohort_month": "{cohort_month}",
+            "cohort_size": 1842,
+            "retention_pct_by_week": [100.0, 68.2, 54.1, 47.8, 43.9, 41.2, 39.8, 38.6]
+          }
+        },
+        {
+          "name": "purge_events",
+          "description": "Permanently delete events matching a filter. Destructive and irreversible — privileged operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "event_type": { "type": "string" },
+              "before": { "type": "string", "description": "ISO date — delete events older than this" }
+            },
+            "required": ["event_type", "before"]
+          },
+          "response": {
+            "purge_id": "prg_{id}",
+            "event_type": "{event_type}",
+            "before": "{before}",
+            "events_deleted": 2841093,
+            "status": "completed",
+            "irreversible": true
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-telemetry
+  namespace: mcp-federation
+  labels:
+    app: mcp-telemetry
+    mcp-domain: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-telemetry
+  template:
+    metadata:
+      labels:
+        app: mcp-telemetry
+        mcp-domain: analytics
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-alpine
+        command: ["python3", "/app/server.py"]
+        env:
+        - name: TOOLS_FILE
+          value: /etc/mcp/tools.json
+        - name: PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: tools
+          mountPath: /etc/mcp
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      volumes:
+      - name: code
+        configMap:
+          name: mcp-server-code
+      - name: tools
+        configMap:
+          name: mcp-tools-telemetry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-telemetry
+  namespace: mcp-federation
+  labels:
+    app: mcp-telemetry
+    mcp-domain: analytics
+spec:
+  selector:
+    app: mcp-telemetry
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080

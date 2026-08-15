@@ -1,0 +1,41 @@
+# Entitlement contract for the ANALYTICS federation.
+#
+# This domain is where the tiers differ most visibly, and not in a simple
+# "enterprise gets more" way:
+#
+#   Globex can call reporting.export_dataset. Acme — the enterprise account —
+#   cannot. Bulk data egress is a separately negotiated add-on that Globex bought
+#   and Acme did not.
+#
+# That asymmetry is the point. Entitlements follow commercial agreements, not a
+# tier ladder, and the gateway expresses them directly instead of forcing you to
+# model them as levels.
+#
+# telemetry.purge_events is granted to nobody — it is destructive and irreversible.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: analytics-entitlements
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: mcp-analytics
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          # ── Acme (enterprise) — full analytics, no bulk export ───────────────
+          - 'jwt.company == "acme" && mcp.tool.target == "reporting" && mcp.tool.name in ["get_kpi_summary", "list_reports", "run_report", "schedule_report"]'
+          - 'jwt.company == "acme" && mcp.tool.target == "telemetry" && mcp.tool.name in ["list_event_types", "query_events", "get_funnel", "get_retention"]'
+
+          # ── Globex (standard) — same, PLUS the data-export add-on ────────────
+          - 'jwt.company == "globex" && mcp.tool.target == "reporting" && mcp.tool.name in ["get_kpi_summary", "list_reports", "run_report", "schedule_report", "export_dataset"]'
+          - 'jwt.company == "globex" && mcp.tool.target == "telemetry" && mcp.tool.name in ["list_event_types", "query_events", "get_funnel", "get_retention"]'
+
+          # ── Initech (trial) — read-only summaries, no raw event access ───────
+          - 'jwt.company == "initech" && mcp.tool.target == "reporting" && mcp.tool.name in ["get_kpi_summary", "list_reports"]'
+          - 'jwt.company == "initech" && mcp.tool.target == "telemetry" && mcp.tool.name in ["list_event_types"]'

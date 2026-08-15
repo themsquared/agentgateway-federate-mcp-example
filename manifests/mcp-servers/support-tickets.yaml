@@ -1,0 +1,188 @@
+# Support domain → Tickets MCP server. Federated behind /mcp/support together
+# with the CRM server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tools-tickets
+  namespace: mcp-federation
+data:
+  tools.json: |
+    {
+      "server": "tickets",
+      "displayName": "Support Ticketing API",
+      "version": "4.2.0",
+      "instructions": "Customer support ticket lifecycle — create, search, escalate, resolve.",
+      "tools": [
+        {
+          "name": "get_ticket",
+          "description": "Retrieve a support ticket with its conversation history and SLA state.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "ticket_id": { "type": "string", "description": "e.g. TIC-48210" } },
+            "required": ["ticket_id"]
+          },
+          "response": {
+            "ticket_id": "{ticket_id}",
+            "subject": "Webhook deliveries failing with 401 since Tuesday",
+            "status": "open",
+            "priority": "high",
+            "customer_id": "cus_8891",
+            "assignee": "sam.rivera@support.example.com",
+            "sla_due": "{today}T23:00:00Z",
+            "sla_state": "at_risk",
+            "messages": 7
+          }
+        },
+        {
+          "name": "search_tickets",
+          "description": "Search tickets by status, priority, or free text.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string" },
+              "status": { "type": "string", "enum": ["open", "pending", "solved", "closed"] },
+              "limit": { "type": "integer", "default": 20 }
+            }
+          },
+          "response": {
+            "query": "{query}",
+            "total": 3,
+            "tickets": [
+              { "ticket_id": "TIC-48210", "subject": "Webhook deliveries failing with 401", "status": "open", "priority": "high" },
+              { "ticket_id": "TIC-48187", "subject": "Invoice PDF missing tax line", "status": "pending", "priority": "normal" },
+              { "ticket_id": "TIC-48102", "subject": "SSO metadata refresh", "status": "solved", "priority": "low" }
+            ]
+          }
+        },
+        {
+          "name": "create_ticket",
+          "description": "Open a new support ticket on behalf of a customer. Write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "customer_id": { "type": "string" },
+              "subject": { "type": "string" },
+              "body": { "type": "string" },
+              "priority": { "type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal" }
+            },
+            "required": ["customer_id", "subject"]
+          },
+          "response": {
+            "ticket_id": "TIC-{id}",
+            "customer_id": "{customer_id}",
+            "subject": "{subject}",
+            "priority": "{priority}",
+            "status": "open",
+            "created": "{today}T10:00:00Z"
+          }
+        },
+        {
+          "name": "escalate_ticket",
+          "description": "Escalate a ticket to a higher support tier and page the on-call. Write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "ticket_id": { "type": "string" },
+              "tier": { "type": "string", "enum": ["t2", "t3", "engineering"], "default": "t2" },
+              "reason": { "type": "string" }
+            },
+            "required": ["ticket_id"]
+          },
+          "response": {
+            "ticket_id": "{ticket_id}",
+            "escalated_to": "{tier}",
+            "reason": "{reason}",
+            "paged": ["oncall-support"],
+            "escalated_at": "{today}T10:12:00Z"
+          }
+        },
+        {
+          "name": "close_ticket",
+          "description": "Close a ticket and finalize its SLA record. Affects reported SLA attainment — privileged operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "ticket_id": { "type": "string" },
+              "resolution": { "type": "string" }
+            },
+            "required": ["ticket_id", "resolution"]
+          },
+          "response": {
+            "ticket_id": "{ticket_id}",
+            "status": "closed",
+            "resolution": "{resolution}",
+            "sla_met": true,
+            "closed_at": "{today}T17:30:00Z"
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-tickets
+  namespace: mcp-federation
+  labels:
+    app: mcp-tickets
+    mcp-domain: support
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-tickets
+  template:
+    metadata:
+      labels:
+        app: mcp-tickets
+        mcp-domain: support
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-alpine
+        command: ["python3", "/app/server.py"]
+        env:
+        - name: TOOLS_FILE
+          value: /etc/mcp/tools.json
+        - name: PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: tools
+          mountPath: /etc/mcp
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      volumes:
+      - name: code
+        configMap:
+          name: mcp-server-code
+      - name: tools
+        configMap:
+          name: mcp-tools-tickets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-tickets
+  namespace: mcp-federation
+  labels:
+    app: mcp-tickets
+    mcp-domain: support
+spec:
+  selector:
+    app: mcp-tickets
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080

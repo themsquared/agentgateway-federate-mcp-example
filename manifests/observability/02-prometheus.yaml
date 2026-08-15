@@ -1,0 +1,130 @@
+# A minimal Prometheus, scoped to this demo.
+#
+# It exists so the chargeback report is a real query against real collected data
+# rather than a one-off scrape of a text endpoint. Single replica, in-memory
+# retention, no persistence — this is a demo aggregator, not a production
+# monitoring stack. Point the same scrape at your own Prometheus/Thanos/Mimir
+# and every query in scripts/chargeback.sh works unchanged.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: mcp-federation
+---
+# Prometheus discovers the gateway pod through the Kubernetes API, so it keeps
+# working when the gateway is scaled to several replicas — each replica is
+# scraped individually and the counters sum across them. A static target pointed
+# at a Service would round-robin between replicas and silently under-count.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+  namespace: mcp-federation
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+  namespace: mcp-federation
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: mcp-federation
+roleRef:
+  kind: Role
+  name: prometheus
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: mcp-federation
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 5s        # tight, so a live demo shows usage within seconds
+      evaluation_interval: 15s
+    scrape_configs:
+    - job_name: agentgateway
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [mcp-federation]
+      relabel_configs:
+      # Only the federation gateway's own pods expose the metrics we bill from.
+      - source_labels: [__meta_kubernetes_pod_label_gateway_networking_k8s_io_gateway_name]
+        action: keep
+        regex: mcp-federation-gateway
+      # agentgateway serves Prometheus metrics on 15020.
+      - source_labels: [__address__]
+        action: replace
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '$1:15020'
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: mcp-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: quay.io/prometheus/prometheus:v3.1.0
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        - --storage.tsdb.retention.time=6h
+        - --web.enable-lifecycle
+        ports:
+        - containerPort: 9090
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 50m, memory: 256Mi }
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: data
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: mcp-federation
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090

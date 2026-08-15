@@ -1,0 +1,83 @@
+# Keycloak — the identity provider for all three consuming companies.
+#
+# Three realms, three issuers. Each company authenticates against its OWN realm
+# with its own signing keys, its own clients, and its own users:
+#
+#   http://keycloak.mcp-federation.svc.cluster.local:8080/realms/acme
+#   http://keycloak.mcp-federation.svc.cluster.local:8080/realms/globex
+#   http://keycloak.mcp-federation.svc.cluster.local:8080/realms/initech
+#
+# To agentgateway these are three independent OIDC providers — it validates each
+# against a different JWKS endpoint. Running them as realms inside one Keycloak
+# keeps the demo to a single pod; swapping any realm for a genuinely separate
+# Keycloak (or Okta, Entra, Auth0 — see the `provider` field agentgateway
+# supports) is a change of issuer URL and nothing else.
+#
+# KC_HOSTNAME is pinned to the in-cluster service URL on purpose. Keycloak
+# derives the `iss` claim from the hostname it is serving under, so without this
+# a token minted through `kubectl port-forward` would carry iss=http://localhost:8080
+# and the gateway — which validates against the in-cluster issuer — would reject
+# it. Pinning the hostname means a token works identically whether it was
+# requested from inside the cluster or from your laptop.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: mcp-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+      - name: keycloak
+        image: quay.io/keycloak/keycloak:26.0
+        args: ["start-dev", "--import-realm"]
+        env:
+        - name: KC_BOOTSTRAP_ADMIN_USERNAME
+          value: admin
+        - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+          value: admin
+        - name: KC_HOSTNAME
+          value: http://keycloak.mcp-federation.svc.cluster.local:8080
+        - name: KC_HOSTNAME_STRICT
+          value: "false"
+        - name: KC_HTTP_ENABLED
+          value: "true"
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /realms/acme
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 40
+        resources:
+          requests: { cpu: 100m, memory: 512Mi }
+        volumeMounts:
+        - name: realms
+          mountPath: /opt/keycloak/data/import
+      volumes:
+      - name: realms
+        configMap:
+          name: keycloak-realms
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: mcp-federation
+spec:
+  selector:
+    app: keycloak
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

@@ -1,0 +1,185 @@
+# Analytics domain → Reporting MCP server. Federated behind /mcp/analytics
+# together with the Telemetry server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tools-reporting
+  namespace: mcp-federation
+data:
+  tools.json: |
+    {
+      "server": "reporting",
+      "displayName": "Reporting API",
+      "version": "3.0.2",
+      "instructions": "Scheduled and ad-hoc business reporting over the analytics warehouse.",
+      "tools": [
+        {
+          "name": "get_kpi_summary",
+          "description": "Headline KPIs for a period — revenue, active accounts, churn, NPS.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "period": { "type": "string", "enum": ["day", "week", "month", "quarter"], "default": "month" }
+            }
+          },
+          "response": {
+            "period": "{period}",
+            "as_of": "{today}",
+            "revenue_usd": 1284500,
+            "revenue_change_pct": 4.2,
+            "active_accounts": 3187,
+            "net_churn_pct": -1.1,
+            "nps": 43
+          }
+        },
+        {
+          "name": "list_reports",
+          "description": "List the saved report definitions available to the caller.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "owner": { "type": "string", "description": "Filter by report owner" } }
+          },
+          "response": {
+            "reports": [
+              { "id": "rpt_arr_waterfall", "name": "ARR Waterfall", "owner": "finance", "last_run": "{today}" },
+              { "id": "rpt_cohort_retention", "name": "Cohort Retention", "owner": "growth", "last_run": "{today}" },
+              { "id": "rpt_support_sla", "name": "Support SLA Attainment", "owner": "support", "last_run": "{today}" }
+            ]
+          }
+        },
+        {
+          "name": "run_report",
+          "description": "Execute a saved report and return its result set. Compute-intensive.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "report_id": { "type": "string" },
+              "period": { "type": "string", "default": "month" }
+            },
+            "required": ["report_id"]
+          },
+          "response": {
+            "report_id": "{report_id}",
+            "run_id": "run_{id}",
+            "period": "{period}",
+            "row_count": 148,
+            "duration_ms": 2140,
+            "rows": [
+              { "segment": "Enterprise", "accounts": 412, "arr_usd": 8940000 },
+              { "segment": "Mid-Market", "accounts": 1105, "arr_usd": 4120000 },
+              { "segment": "SMB", "accounts": 1670, "arr_usd": 1985000 }
+            ]
+          }
+        },
+        {
+          "name": "schedule_report",
+          "description": "Schedule a saved report for recurring delivery. Write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "report_id": { "type": "string" },
+              "cron": { "type": "string", "description": "Cron expression, e.g. 0 7 * * 1" },
+              "recipients": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["report_id", "cron"]
+          },
+          "response": {
+            "schedule_id": "sch_{id}",
+            "report_id": "{report_id}",
+            "cron": "{cron}",
+            "status": "active",
+            "next_run": "{next_month}"
+          }
+        },
+        {
+          "name": "export_dataset",
+          "description": "Export a full raw dataset to object storage. Bulk data egress — privileged operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "dataset": { "type": "string", "description": "Dataset name, e.g. fact_transactions" },
+              "format": { "type": "string", "enum": ["csv", "parquet"], "default": "parquet" }
+            },
+            "required": ["dataset"]
+          },
+          "response": {
+            "export_id": "exp_{id}",
+            "dataset": "{dataset}",
+            "format": "{format}",
+            "status": "completed",
+            "rows_exported": 4820117,
+            "size_bytes": 918273645,
+            "location": "s3://analytics-exports/{dataset}/{today}/"
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-reporting
+  namespace: mcp-federation
+  labels:
+    app: mcp-reporting
+    mcp-domain: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-reporting
+  template:
+    metadata:
+      labels:
+        app: mcp-reporting
+        mcp-domain: analytics
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-alpine
+        command: ["python3", "/app/server.py"]
+        env:
+        - name: TOOLS_FILE
+          value: /etc/mcp/tools.json
+        - name: PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: tools
+          mountPath: /etc/mcp
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      volumes:
+      - name: code
+        configMap:
+          name: mcp-server-code
+      - name: tools
+        configMap:
+          name: mcp-tools-reporting
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-reporting
+  namespace: mcp-federation
+  labels:
+    app: mcp-reporting
+    mcp-domain: analytics
+spec:
+  selector:
+    app: mcp-reporting
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080

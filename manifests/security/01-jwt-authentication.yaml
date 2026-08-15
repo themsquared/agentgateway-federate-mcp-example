@@ -1,0 +1,49 @@
+# Step 1 of authn/authz: prove who is calling.
+#
+# One policy, three OAuth providers. agentgateway reads the `iss` claim of the
+# presented token, picks the matching provider, fetches that provider's JWKS, and
+# verifies the signature and audience. A token from Acme's realm is validated
+# against Acme's keys — Globex's keys cannot mint a token that passes as Acme.
+#
+# mode: Strict — no token, no entry. Every request to this gateway must carry a
+# valid JWT before any routing or tool logic runs. (Permissive validates a token
+# if present but allows anonymous through; Optional is looser still. Strict is
+# the right default for a multi-tenant MCP endpoint.)
+#
+# audiences pins the token to THIS gateway: a token Acme obtained for some other
+# relying party will not be accepted here even though the signature is good.
+#
+# Adding a fourth company is four lines in this file plus its authorization rule
+# — the federation, the routes, and the MCP servers are untouched.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: company-jwt-authentication
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-federation-gateway
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/acme
+        audiences: ["mcp-federation"]
+        jwks:
+          remote:
+            url: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/acme/protocol/openid-connect/certs
+            cacheDuration: 5m
+      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/globex
+        audiences: ["mcp-federation"]
+        jwks:
+          remote:
+            url: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/globex/protocol/openid-connect/certs
+            cacheDuration: 5m
+      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/initech
+        audiences: ["mcp-federation"]
+        jwks:
+          remote:
+            url: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/initech/protocol/openid-connect/certs
+            cacheDuration: 5m

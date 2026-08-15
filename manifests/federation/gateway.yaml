@@ -1,0 +1,78 @@
+# The gateway every company connects to.
+#
+# One Gateway, one hostname, three federated MCP endpoints:
+#   /mcp/billing    → payments + invoicing
+#   /mcp/analytics  → reporting + telemetry
+#   /mcp/support    → tickets + crm
+#
+# Consumers never learn the individual service names or addresses. Adding a
+# fourth billing service later is an edit to manifests/federation/backends.yaml
+# — no consumer reconfiguration, no new endpoint to publish.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-federation-gateway
+  namespace: mcp-federation
+spec:
+  gatewayClassName: enterprise-agentgateway
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-billing
+  namespace: mcp-federation
+spec:
+  parentRefs:
+  - name: mcp-federation-gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp/billing
+    backendRefs:
+    - name: mcp-billing
+      group: agentgateway.dev
+      kind: AgentgatewayBackend
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-analytics
+  namespace: mcp-federation
+spec:
+  parentRefs:
+  - name: mcp-federation-gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp/analytics
+    backendRefs:
+    - name: mcp-analytics
+      group: agentgateway.dev
+      kind: AgentgatewayBackend
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-support
+  namespace: mcp-federation
+spec:
+  parentRefs:
+  - name: mcp-federation-gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp/support
+    backendRefs:
+    - name: mcp-support
+      group: agentgateway.dev
+      kind: AgentgatewayBackend

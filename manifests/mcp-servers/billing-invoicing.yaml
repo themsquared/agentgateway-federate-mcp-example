@@ -1,0 +1,189 @@
+# Billing domain → Invoicing MCP server. Second of the two servers federated
+# behind /mcp/billing. Same stock-image pattern as billing-payments.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tools-invoicing
+  namespace: mcp-federation
+data:
+  tools.json: |
+    {
+      "server": "invoicing",
+      "displayName": "Invoicing API",
+      "version": "2.1.0",
+      "instructions": "Invoice generation, delivery, and dunning for the billing platform.",
+      "tools": [
+        {
+          "name": "get_invoice",
+          "description": "Retrieve a single invoice with its line items and payment status.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "invoice_id": { "type": "string", "description": "Invoice identifier, e.g. inv_2026_0182" } },
+            "required": ["invoice_id"]
+          },
+          "response": {
+            "invoice_id": "{invoice_id}",
+            "customer_id": "cus_8891",
+            "status": "open",
+            "currency": "USD",
+            "subtotal_cents": 412000,
+            "tax_cents": 34020,
+            "total_cents": 446020,
+            "due_date": "{next_month}",
+            "line_items": [
+              { "description": "Platform subscription — Enterprise", "quantity": 1, "unit_cents": 350000 },
+              { "description": "Overage — API calls (1.2M)", "quantity": 12, "unit_cents": 5167 }
+            ]
+          }
+        },
+        {
+          "name": "list_invoices",
+          "description": "List invoices for a customer, optionally filtered by status.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "customer_id": { "type": "string" },
+              "status": { "type": "string", "enum": ["draft", "open", "paid", "void", "uncollectible"] },
+              "limit": { "type": "integer", "default": 10 }
+            },
+            "required": ["customer_id"]
+          },
+          "response": {
+            "customer_id": "{customer_id}",
+            "invoices": [
+              { "invoice_id": "inv_2026_0182", "status": "open", "total_cents": 446020, "due_date": "{next_month}" },
+              { "invoice_id": "inv_2026_0151", "status": "paid", "total_cents": 412000, "paid_at": "{today}" },
+              { "invoice_id": "inv_2026_0119", "status": "paid", "total_cents": 398500, "paid_at": "{today}" }
+            ],
+            "has_more": false
+          }
+        },
+        {
+          "name": "create_invoice",
+          "description": "Draft a new invoice for a customer. Write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "customer_id": { "type": "string" },
+              "currency": { "type": "string", "default": "USD" },
+              "due_in_days": { "type": "integer", "default": 30 }
+            },
+            "required": ["customer_id"]
+          },
+          "response": {
+            "invoice_id": "inv_{id}",
+            "customer_id": "{customer_id}",
+            "status": "draft",
+            "currency": "{currency}",
+            "total_cents": 0,
+            "created": "{today}"
+          }
+        },
+        {
+          "name": "send_invoice_reminder",
+          "description": "Send a dunning reminder for an unpaid invoice. Contacts the customer — write operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoice_id": { "type": "string" },
+              "template": { "type": "string", "enum": ["gentle", "firm", "final"], "default": "gentle" }
+            },
+            "required": ["invoice_id"]
+          },
+          "response": {
+            "invoice_id": "{invoice_id}",
+            "reminder_id": "rem_{id}",
+            "template": "{template}",
+            "sent_to": "ap@customer.example.com",
+            "sent_at": "{today}T16:05:00Z"
+          }
+        },
+        {
+          "name": "void_invoice",
+          "description": "Void an issued invoice. Irreversible and affects revenue recognition — privileged operation.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoice_id": { "type": "string" },
+              "reason": { "type": "string" }
+            },
+            "required": ["invoice_id", "reason"]
+          },
+          "response": {
+            "invoice_id": "{invoice_id}",
+            "status": "void",
+            "reason": "{reason}",
+            "voided_at": "{today}T16:41:00Z"
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-invoicing
+  namespace: mcp-federation
+  labels:
+    app: mcp-invoicing
+    mcp-domain: billing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-invoicing
+  template:
+    metadata:
+      labels:
+        app: mcp-invoicing
+        mcp-domain: billing
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-alpine
+        command: ["python3", "/app/server.py"]
+        env:
+        - name: TOOLS_FILE
+          value: /etc/mcp/tools.json
+        - name: PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: tools
+          mountPath: /etc/mcp
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { memory: 128Mi }
+      volumes:
+      - name: code
+        configMap:
+          name: mcp-server-code
+      - name: tools
+        configMap:
+          name: mcp-tools-invoicing
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-invoicing
+  namespace: mcp-federation
+  labels:
+    app: mcp-invoicing
+    mcp-domain: billing
+spec:
+  selector:
+    app: mcp-invoicing
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
