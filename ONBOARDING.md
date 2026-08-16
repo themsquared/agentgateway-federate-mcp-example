@@ -120,9 +120,14 @@ Either way, add the printed block to
 > **If the partner cannot add custom claims**, you have two fallbacks. Either
 > derive company from the issuer itself — `jwt.iss == "https://umbrella.okta.com/oauth2/default"`
 > works anywhere `jwt.company` does, in both entitlement rules and the quota CEL —
-> or map an existing claim (a group name, `azp`, a domain in `email`). Deriving
-> from `iss` is the most robust: it needs nothing from the partner beyond an
-> OIDC endpoint, at the cost of a longer string in your policies.
+> or match on OAuth scopes: `"reporting:read" in jwt.scope.split(" ")`. Both
+> forms are validated against a live gateway. Deriving from `iss` is the most
+> robust: it needs nothing from the partner beyond an OIDC endpoint.
+>
+> **If the partner's auth server issues opaque (non-JWT) tokens**, JWKS
+> validation cannot check them at all — that requires calling the auth server's
+> introspection endpoint via `extAuth`, which this POC does not demonstrate.
+> See [PRODUCTION.md](PRODUCTION.md) before promising it.
 
 ---
 

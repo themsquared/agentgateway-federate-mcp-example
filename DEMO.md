@@ -128,9 +128,10 @@ there is nothing to enumerate.
 > a pull request. The PR *is* the commercial agreement, expressed as config.
 
 > **Expect: "what if the IdP should own entitlements?"** It can — swap
-> `jwt.company == "globex"` for a claim like `"billing:write" in jwt.scopes`. The
-> same CEL reads either. This demo puts policy in the gateway because platform
-> teams usually want the contract in their own repo, but nothing forces that.
+> `jwt.company == "globex"` for a scope check: `"billing:write" in jwt.scope.split(" ")`
+> (validated on this stack). The same CEL reads either. This demo puts policy in
+> the gateway because platform teams usually want the contract in their own
+> repo, but nothing forces that.
 
 ---
 

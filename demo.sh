@@ -380,6 +380,7 @@ act6_onboarding() {
   narrate "Entra tenant instead of a realm here, and how to stage it safely."
   echo ""
   echo -e "  ${BOLD}ONBOARDING.md${NC}   rinse-and-repeat partner onboarding"
+  echo -e "  ${BOLD}PRODUCTION.md${NC}   mapping this to a real estate: 50 IdPs, domains, per-user quotas"
   echo -e "  ${BOLD}WALKTHROUGH.md${NC}  how the whole thing is built, layer by layer"
   echo -e "  ${BOLD}README.md${NC}       architecture and repo map"
   pause

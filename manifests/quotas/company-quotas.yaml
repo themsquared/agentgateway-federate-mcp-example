@@ -67,6 +67,23 @@ spec:
       - cel:
           expression: 'jwt.company'
           key: company
+
+    # Also supported (validated on this stack): a quota per USER within a
+    # company, via a nested descriptor keyed on the token subject —
+    #
+    #   descriptors:
+    #   - key: company
+    #     value: globex
+    #     descriptors:
+    #     - key: user
+    #       rateLimit: { requestsPerUnit: 60, unit: MINUTE }
+    #   rateLimits:
+    #   - actions:
+    #     - cel: { expression: 'jwt.company', key: company }
+    #     - cel: { expression: 'jwt.sub',     key: user }
+    #
+    # Each distinct jwt.sub gets its own counter inside the company's. Keep
+    # user-level identifiers OUT of metric labels though — see PRODUCTION.md.
 ---
 # Attach the quota table to the gateway. Every route behind this gateway — all
 # three federated domains — is counted against the caller's company budget.

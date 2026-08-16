@@ -39,6 +39,7 @@ in version control.
 | --- | --- |
 | **[WALKTHROUGH.md](WALKTHROUGH.md)** | Start to finish — how the whole thing is built, one layer at a time |
 | **[ONBOARDING.md](ONBOARDING.md)** | Rinse and repeat — adding a new partner with their own IdP |
+| **[PRODUCTION.md](PRODUCTION.md)** | Mapping the POC to a real estate — 50 IdPs, domain-based tenancy, opaque tokens, per-user quotas, many DCs |
 | **[DEMO.md](DEMO.md)** | Presenter's guide and talk track for `./demo.sh` |
 
 ---
