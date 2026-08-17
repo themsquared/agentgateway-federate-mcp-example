@@ -19,7 +19,7 @@ Usage:
 
 Env:
   GATEWAY_URL   default http://localhost:8080
-  KEYCLOAK_URL  default http://localhost:8081
+  KEYCLOAK_URL  default http://localhost:8180
 
 Standard library only — no pip install to run the demo.
 """
@@ -32,8 +32,24 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8080").rstrip("/")
-KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8081").rstrip("/")
+def _resolve_url(var, default):
+    """Explicit env > .ports.env (written by a running ./port-forward.sh) > default."""
+    if os.environ.get(var):
+        return os.environ[var].rstrip("/")
+    ports_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".ports.env")
+    try:
+        with open(ports_env) as fh:
+            for line in fh:
+                key, _, val = line.strip().partition("=")
+                if key == var and val:
+                    return val.rstrip("/")
+    except OSError:
+        pass
+    return default
+
+
+GATEWAY_URL = _resolve_url("GATEWAY_URL", "http://localhost:8080")
+KEYCLOAK_URL = _resolve_url("KEYCLOAK_URL", "http://localhost:8180")
 
 # Companies are not hardcoded so an onboarded partner works with these tools
 # immediately: `COMPANIES=acme,globex,initech,umbrella scripts/mcp.py matrix`.

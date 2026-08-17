@@ -1,0 +1,34 @@
+# Distributed tracing → the Solo Enterprise UI.
+#
+# Attaches OTLP tracing to the federation gateway. Spans are shipped to the
+# telemetry collector that the UI's chart deploys (agentgateway-system), stored
+# in its ClickHouse, and rendered in the UI's Tracing view — every MCP call
+# through the gateway becomes a browsable trace with the federated server, tool,
+# and latency on it.
+#
+# UI-coupled on purpose: setup.sh applies this file only when the UI is
+# installed, because the backendRef below points at the collector that ships
+# with it. Skipping the UI (--no-ui) skips this too; nothing else depends on it.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: mcp-federation
+spec:
+  targetRefs:
+  - kind: Gateway
+    name: mcp-federation-gateway
+    group: gateway.networking.k8s.io
+  frontend:
+    tracing:
+      backendRef:
+        name: solo-enterprise-telemetry-collector   # deployed by the UI chart
+        namespace: agentgateway-system
+        kind: Service
+        port: 4317
+      protocol: GRPC
+      randomSampling: "true"    # start a span even when the request has no trace yet
+      clientSampling: "true"    # continue an existing trace
+      resources:
+      - name: service.name
+        expression: '"mcp-federation-gateway"'

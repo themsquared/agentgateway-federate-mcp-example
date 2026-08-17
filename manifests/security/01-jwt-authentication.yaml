@@ -29,21 +29,21 @@ spec:
     jwtAuthentication:
       mode: Strict
       providers:
-      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/acme
+      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8180/realms/acme
         audiences: ["mcp-federation"]
         jwks:
           remote:
-            url: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/acme/protocol/openid-connect/certs
+            url: http://keycloak.mcp-federation.svc.cluster.local:8180/realms/acme/protocol/openid-connect/certs
             cacheDuration: 5m
-      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/globex
+      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8180/realms/globex
         audiences: ["mcp-federation"]
         jwks:
           remote:
-            url: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/globex/protocol/openid-connect/certs
+            url: http://keycloak.mcp-federation.svc.cluster.local:8180/realms/globex/protocol/openid-connect/certs
             cacheDuration: 5m
-      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/initech
+      - issuer: http://keycloak.mcp-federation.svc.cluster.local:8180/realms/initech
         audiences: ["mcp-federation"]
         jwks:
           remote:
-            url: http://keycloak.mcp-federation.svc.cluster.local:8080/realms/initech/protocol/openid-connect/certs
+            url: http://keycloak.mcp-federation.svc.cluster.local:8180/realms/initech/protocol/openid-connect/certs
             cacheDuration: 5m

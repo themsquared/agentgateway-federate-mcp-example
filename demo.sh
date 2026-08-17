@@ -30,8 +30,17 @@ MANIFESTS="${SCRIPT_DIR}/manifests"
 SCRIPTS="${SCRIPT_DIR}/scripts"
 NS="${DEMO_NS:-mcp-federation}"
 
+# URL resolution, most specific wins: explicit env > .ports.env (written by a
+# running ./port-forward.sh, so non-default ports Just Work) > defaults.
+if [ -f "${SCRIPT_DIR}/.ports.env" ]; then
+  while IFS='=' read -r k v; do
+    case "$k" in GATEWAY_URL|KEYCLOAK_URL|PROMETHEUS_URL)
+      eval "export ${k}=\"\${${k}:-${v}}\"" ;;
+    esac
+  done < "${SCRIPT_DIR}/.ports.env"
+fi
 export GATEWAY_URL="${GATEWAY_URL:-http://localhost:8080}"
-export KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8081}"
+export KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8180}"
 export PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}"
 
 BOLD='\033[1m'; DIM='\033[2m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'

@@ -43,7 +43,7 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REALMS_DIR="${REPO_DIR}/manifests/keycloak/realms"
 NS="${DEMO_NS:-mcp-federation}"
 
-KC_INTERNAL="http://keycloak.mcp-federation.svc.cluster.local:8080"
+KC_INTERNAL="http://keycloak.mcp-federation.svc.cluster.local:8180"
 
 NAME=""; DISPLAY=""; TIER="standard"; DOMAINS=""; QUOTA=""
 EXTERNAL_ISSUER=""; JWKS_URL=""; APPLY=false

@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 #
-# Open the three port-forwards the demo scripts expect, and hold them open.
+# Open the port-forwards the demo expects, and hold them open.
 #
 #   MCP gateway  → localhost:${GATEWAY_PORT:-8080}
-#   Keycloak     → localhost:${KEYCLOAK_PORT:-8081}
+#   Keycloak     → localhost:${KEYCLOAK_PORT:-8180}
 #   Prometheus   → localhost:${PROMETHEUS_PORT:-9090}
+#   UI           → localhost:${UI_PORT:-9080}        (when installed)
+#
+# Keycloak's local port matches its in-cluster port (8180) on purpose: the OIDC
+# issuer URL embeds that port, and UI browser SSO works by resolving the issuer
+# hostname to 127.0.0.1 (one-time /etc/hosts entry, printed below) — so the
+# browser must find Keycloak on the very same port the issuer names.
 #
 # Run this in its own terminal and leave it running. Ctrl-C stops all three.
 #
@@ -12,7 +18,7 @@
 # love 8080), either free it or override here — the script prints the matching
 # environment exports for scripts/mcp.py and scripts/chargeback.py:
 #
-#   GATEWAY_PORT=18080 KEYCLOAK_PORT=18081 PROMETHEUS_PORT=19090 ./port-forward.sh
+#   GATEWAY_PORT=18080 KEYCLOAK_PORT=18180 PROMETHEUS_PORT=19090 ./port-forward.sh
 #
 # Note on Keycloak: tokens minted through this port-forward carry the in-cluster
 # issuer, not localhost, because KC_HOSTNAME is pinned in the deployment. That is
@@ -21,12 +27,21 @@
 set -euo pipefail
 
 NS="${DEMO_NS:-mcp-federation}"
+AGW_NS="${AGW_NS:-agentgateway-system}"
 GATEWAY_PORT="${GATEWAY_PORT:-8080}"
-KEYCLOAK_PORT="${KEYCLOAK_PORT:-8081}"
+KEYCLOAK_PORT="${KEYCLOAK_PORT:-8180}"
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+UI_PORT="${UI_PORT:-9080}"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; DIM='\033[2m'; BOLD='\033[1m'; NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The resolved URLs are written here for the other tools to discover, so running
+# on non-default ports needs no manual exports: demo.sh, scripts/mcp.py and
+# scripts/chargeback.py all read this file when the corresponding env var is not
+# already set. Gitignored; removed again on shutdown.
+PORTS_ENV="${SCRIPT_DIR}/.ports.env"
 
 ERRDIR="$(mktemp -d)"
 PIDS=()
@@ -40,6 +55,7 @@ cleanup() {
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do kill "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
   rm -rf "$ERRDIR"
+  rm -f "$PORTS_ENV"
   exit "${1:-0}"
 }
 trap 'cleanup 0' INT TERM
@@ -57,7 +73,9 @@ port_holder() {
 # names the culprit.
 preflight() {
   local failed=0
-  for spec in "MCP gateway:${GATEWAY_PORT}" "Keycloak:${KEYCLOAK_PORT}" "Prometheus:${PROMETHEUS_PORT}"; do
+  local specs=("MCP gateway:${GATEWAY_PORT}" "Keycloak:${KEYCLOAK_PORT}" "Prometheus:${PROMETHEUS_PORT}")
+  [ "$UI_INSTALLED" = "true" ] && specs+=("UI:${UI_PORT}")
+  for spec in "${specs[@]}"; do
     local label="${spec%:*}" port="${spec##*:}"
     local holder; holder="$(port_holder "$port")"
     if [ -n "$holder" ]; then
@@ -70,7 +88,7 @@ preflight() {
     echo -e "  ${DIM}Free the port(s), or run on different ones — the demo scripts pick the${NC}"
     echo -e "  ${DIM}URLs up from the environment:${NC}"
     echo ""
-    echo -e "    GATEWAY_PORT=18080 KEYCLOAK_PORT=18081 PROMETHEUS_PORT=19090 ./port-forward.sh"
+    echo -e "    GATEWAY_PORT=18080 KEYCLOAK_PORT=18180 PROMETHEUS_PORT=19090 ./port-forward.sh"
     echo ""
     exit 1
   fi
@@ -79,9 +97,9 @@ preflight() {
 # Start one forward, then wait until it is actually serving before claiming ✓.
 # kubectl exits on a failed bind and prints why — surface that instead of hiding it.
 forward() {
-  local target=$1 local_port=$2 remote_port=$3 label=$4
+  local ns=$1 target=$2 local_port=$3 remote_port=$4 label=$5
   local errfile="${ERRDIR}/${local_port}.err"
-  kubectl port-forward -n "$NS" "$target" "${local_port}:${remote_port}" >/dev/null 2>"$errfile" &
+  kubectl port-forward -n "$ns" "$target" "${local_port}:${remote_port}" >/dev/null 2>"$errfile" &
   local pid=$!
   for _ in $(seq 1 40); do
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -103,22 +121,47 @@ forward() {
   echo -e "  ${GREEN}✓${NC} ${label}  ${CYAN}http://localhost:${local_port}${NC}"
 }
 
+# The UI is optional (setup.sh --no-ui skips it). Only forward it when present.
+UI_INSTALLED=false
+kubectl get svc solo-enterprise-ui -n "${AGW_NS}" >/dev/null 2>&1 && UI_INSTALLED=true
+
 echo ""
 echo -e "${BOLD}Port-forwards${NC} ${DIM}(namespace: ${NS})${NC}"
 preflight
-forward svc/mcp-federation-gateway "${GATEWAY_PORT}"    80   "MCP gateway "
-forward svc/keycloak               "${KEYCLOAK_PORT}"   8080 "Keycloak    "
-forward svc/prometheus             "${PROMETHEUS_PORT}" 9090 "Prometheus  "
+forward "$NS"     svc/mcp-federation-gateway "${GATEWAY_PORT}"    80   "MCP gateway "
+forward "$NS"     svc/keycloak               "${KEYCLOAK_PORT}"   8180 "Keycloak    "
+forward "$NS"     svc/prometheus             "${PROMETHEUS_PORT}" 9090 "Prometheus  "
+if [ "$UI_INSTALLED" = "true" ]; then
+  forward "$AGW_NS" svc/solo-enterprise-ui   "${UI_PORT}"         80   "UI          "
+else
+  echo -e "  ${DIM}· UI            not installed (setup.sh --no-ui) — skipping${NC}"
+fi
 echo ""
 
-# The demo scripts default to 8080/8081/9090 — print exports when running
-# elsewhere so the next command the user types actually works.
-if [ "${GATEWAY_PORT}" != "8080" ] || [ "${KEYCLOAK_PORT}" != "8081" ] || [ "${PROMETHEUS_PORT}" != "9090" ]; then
-  echo -e "  ${YELLOW}Non-default ports — run this in the terminal where you use the scripts:${NC}"
+# Publish the resolved URLs for the other tools. demo.sh and the Python scripts
+# read this file automatically, so non-default ports need no manual exports.
+cat > "$PORTS_ENV" <<EOF
+GATEWAY_URL=http://localhost:${GATEWAY_PORT}
+KEYCLOAK_URL=http://localhost:${KEYCLOAK_PORT}
+PROMETHEUS_URL=http://localhost:${PROMETHEUS_PORT}
+EOF
+if [ "${GATEWAY_PORT}" != "8080" ] || [ "${KEYCLOAK_PORT}" != "8180" ] || [ "${PROMETHEUS_PORT}" != "9090" ]; then
+  echo -e "  ${DIM}Non-default ports — recorded in .ports.env; demo.sh and the scripts pick${NC}"
+  echo -e "  ${DIM}them up automatically.${NC}"
   echo ""
-  echo -e "    export GATEWAY_URL=http://localhost:${GATEWAY_PORT}"
-  echo -e "    export KEYCLOAK_URL=http://localhost:${KEYCLOAK_PORT}"
-  echo -e "    export PROMETHEUS_URL=http://localhost:${PROMETHEUS_PORT}"
+fi
+if [ "$UI_INSTALLED" = "true" ]; then
+  echo -e "  ${BOLD}UI:${NC} http://localhost:${UI_PORT}  ${DIM}(login: operator / operator)${NC}"
+  if [ "${KEYCLOAK_PORT}" = "8180" ]; then
+    if ! grep -q "keycloak.${NS}.svc.cluster.local" /etc/hosts 2>/dev/null; then
+      echo -e "  ${YELLOW}▸ UI browser login needs a one-time hosts entry (the OIDC issuer must${NC}"
+      echo -e "  ${YELLOW}  resolve in your browser):${NC}"
+      echo -e "      echo \"127.0.0.1 keycloak.${NS}.svc.cluster.local\" | sudo tee -a /etc/hosts"
+    fi
+  else
+    echo -e "  ${YELLOW}▸ Keycloak is not on 8180 — UI browser SSO will fail. The browser must${NC}"
+    echo -e "  ${YELLOW}  reach the issuer at its own port; keep KEYCLOAK_PORT=8180 to use the UI.${NC}"
+  fi
   echo ""
 fi
 echo -e "  ${DIM}Keycloak admin console: http://localhost:${KEYCLOAK_PORT}  (admin / admin)${NC}"

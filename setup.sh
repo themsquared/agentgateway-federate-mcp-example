@@ -38,16 +38,19 @@ fi
 
 CLUSTER_NAME="${CLUSTER_NAME:-mcp-federation}"
 AGW_VERSION="${AGW_VERSION:-v2026.8.0}"
+UI_VERSION="${UI_VERSION:-0.5.4}"
 GATEWAY_API_VERSION="${GATEWAY_API_VERSION:-v1.5.0}"
 AGW_NS="${AGW_NS:-agentgateway-system}"
 DEMO_NS="${DEMO_NS:-mcp-federation}"
 
 USE_CURRENT_CONTEXT=false
 SKIP_INSTALL=false
+INSTALL_UI=true
 for arg in "$@"; do
   case "$arg" in
     --use-current-context) USE_CURRENT_CONTEXT=true ;;
     --skip-install)        SKIP_INSTALL=true; USE_CURRENT_CONTEXT=true ;;
+    --no-ui)               INSTALL_UI=false ;;
     -h|--help)             sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "unknown flag: $arg (try --help)"; exit 1 ;;
   esac
@@ -229,6 +232,50 @@ info "Applying metering attributes and Prometheus..."
 kubectl apply -f "${MANIFESTS}/observability/"
 
 ###############################################################################
+# Solo Enterprise UI (the agentgateway dashboard)
+###############################################################################
+if [ "$INSTALL_UI" = "true" ] && [ "$SKIP_INSTALL" = "false" ]; then
+  header "Solo Enterprise UI (management chart ${UI_VERSION})"
+
+  # The UI backend does OIDC discovery against the platform realm at startup, so
+  # Keycloak must be answering before the chart's pods come up.
+  info "Waiting for Keycloak (the UI logs in against the 'platform' realm)..."
+  kubectl rollout status deploy/keycloak -n "${DEMO_NS}" --timeout=300s >/dev/null
+
+  # Agentgateway product only — no kagent, no mesh. istio.ambient is disabled
+  # because this cluster runs no mesh; leaving it on labels pods for a dataplane
+  # that does not exist. The chart also deploys the telemetry collector and
+  # ClickHouse that back the UI's traffic and tracing views (manifests/ui/
+  # tracing.yaml points the gateway's spans at that collector).
+  info "Installing the UI into ${AGW_NS}..."
+  helm upgrade -i agentgateway-ui \
+    oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/management \
+    -n "${AGW_NS}" \
+    --version "${UI_VERSION}" \
+    --set cluster=mgmt-cluster \
+    --set products.agentgateway.enabled=true \
+    --set 'products.agentgateway.features.cost-management=true' \
+    --set 'products.agentgateway.features.cost-management-writes=true' \
+    --set istio.ambient.enabled=false \
+    --set-string "licensing.licenseKey=${AGENTGATEWAY_LICENSE_KEY}" \
+    --set-string "oidc.issuer=http://keycloak.${DEMO_NS}.svc.cluster.local:8180/realms/platform" \
+    --set-string "ui.backend.oidc.clientId=agw-ui-backend" \
+    --set-string "ui.backend.oidc.secret=agw-ui-backend-secret" \
+    --set-string "ui.frontend.oidc.clientId=agw-ui-frontend"
+
+  info "Wiring gateway tracing to the UI's telemetry collector..."
+  kubectl apply -f "${MANIFESTS}/ui/"
+elif [ "$INSTALL_UI" = "true" ]; then
+  # --skip-install re-applies manifests only; keep the tracing policy in sync if
+  # the UI is already present, and skip it cleanly if it never was.
+  if kubectl get svc solo-enterprise-telemetry-collector -n "${AGW_NS}" >/dev/null 2>&1; then
+    kubectl apply -f "${MANIFESTS}/ui/"
+  else
+    info "UI not installed — skipping manifests/ui/ (run without --skip-install to add it)"
+  fi
+fi
+
+###############################################################################
 # Wait for readiness
 ###############################################################################
 header "Waiting for everything to come up"
@@ -262,6 +309,11 @@ ok "gateway programmed"
 kubectl rollout status deploy/mcp-federation-gateway -n "${DEMO_NS}" --timeout=180s >/dev/null
 ok "gateway proxy running"
 
+if [ "$INSTALL_UI" = "true" ] && kubectl get deploy solo-enterprise-ui -n "${AGW_NS}" >/dev/null 2>&1; then
+  info "Solo Enterprise UI (ClickHouse first boot takes a couple of minutes)..."
+  kubectl rollout status deploy/solo-enterprise-ui -n "${AGW_NS}" --timeout=420s >/dev/null && ok "UI running"
+fi
+
 ###############################################################################
 # Done
 ###############################################################################
@@ -290,5 +342,10 @@ cat <<EOF
          scripts/mcp.py list acme billing
          scripts/mcp.py call globex analytics reporting_export_dataset '{"dataset":"fact_transactions"}'
          scripts/chargeback.py --by-tool
+
+    ${BOLD}UI${NC} (agentgateway dashboard): http://localhost:9080 after ./port-forward.sh —
+    login operator / operator. Browser SSO needs a one-time hosts entry:
+
+         echo "127.0.0.1 keycloak.${DEMO_NS}.svc.cluster.local" | sudo tee -a /etc/hosts
 
 EOF

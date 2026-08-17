@@ -39,7 +39,23 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090").rstrip("/")
+def _resolve_url(var, default):
+    """Explicit env > .ports.env (written by a running ./port-forward.sh) > default."""
+    if os.environ.get(var):
+        return os.environ[var].rstrip("/")
+    ports_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".ports.env")
+    try:
+        with open(ports_env) as fh:
+            for line in fh:
+                key, _, val = line.strip().partition("=")
+                if key == var and val:
+                    return val.rstrip("/")
+    except OSError:
+        pass
+    return default
+
+
+PROMETHEUS_URL = _resolve_url("PROMETHEUS_URL", "http://localhost:9090")
 PRICING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pricing.json")
 
 BOLD = "\033[1m"

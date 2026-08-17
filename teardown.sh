@@ -33,11 +33,12 @@ case "$MODE" in
   --all)
     info "Deleting demo namespace '${DEMO_NS}'..."
     kubectl delete namespace "${DEMO_NS}" --ignore-not-found --wait=true
-    info "Uninstalling agentgateway..."
+    info "Uninstalling the UI and agentgateway..."
+    helm uninstall agentgateway-ui -n "${AGW_NS}" 2>/dev/null || true
     helm uninstall enterprise-agentgateway -n "${AGW_NS}" 2>/dev/null || true
     helm uninstall enterprise-agentgateway-crds -n "${AGW_NS}" 2>/dev/null || true
     kubectl delete namespace "${AGW_NS}" --ignore-not-found --wait=false
-    ok "demo and agentgateway removed"
+    ok "demo, UI and agentgateway removed"
     ;;
   namespace)
     info "Deleting demo namespace '${DEMO_NS}'..."

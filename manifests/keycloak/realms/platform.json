@@ -1,0 +1,76 @@
+{
+  "realm": "platform",
+  "displayName": "Platform Operations",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 3600,
+  "groups": [
+    { "name": "admins" },
+    { "name": "readers" }
+  ],
+  "clients": [
+    {
+      "clientId": "agw-ui-frontend",
+      "name": "AgentGateway UI (browser)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "claim.name": "Groups",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "agw-ui-backend",
+      "name": "AgentGateway UI (backend)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "agw-ui-backend-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["*"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "claim.name": "Groups",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "operator",
+      "enabled": true,
+      "email": "operator@platform.example.com",
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Operator",
+      "credentials": [ { "type": "password", "value": "operator", "temporary": false } ],
+      "groups": [ "/admins" ]
+    }
+  ]
+}

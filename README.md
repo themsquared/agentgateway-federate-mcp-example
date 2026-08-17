@@ -57,7 +57,7 @@ cp .env.example .env        # add your AGENTGATEWAY_LICENSE_KEY
 Then, in a second terminal:
 
 ```bash
-./port-forward.sh           # leave running: gateway :8080, Keycloak :8081, Prometheus :9090
+./port-forward.sh           # leave running: gateway :8080, Keycloak :8180, Prometheus :9090, UI :9080
 ```
 
 And back in the first:
@@ -179,6 +179,28 @@ sum by (company, server, resource) (agentgateway_mcp_requests_total{method="tool
 `scripts/chargeback.py` runs it, prices it from `scripts/pricing.json`, and also
 reports allowed vs denied vs throttled per company.
 
+### 6. The UI — see it, not just curl it
+
+`setup.sh` also installs the **Solo Enterprise UI** — the agentgateway dashboard
+(gateways, routes, backends, policies, traffic, tracing, and the Cost Management
+views). It runs at **http://localhost:9080** once `./port-forward.sh` is up.
+
+- **Login:** `operator` / `operator` — a platform-operator identity from the
+  `platform` realm ([manifests/keycloak/realms/platform.json](manifests/keycloak/realms/platform.json)),
+  which is deliberately separate from the customer realms: operators see the
+  whole estate, customers only ever talk MCP to the gateway.
+- **One-time hosts entry** (browser SSO — the OIDC issuer must resolve in your
+  browser):
+
+  ```bash
+  echo "127.0.0.1 keycloak.mcp-federation.svc.cluster.local" | sudo tee -a /etc/hosts
+  ```
+
+- **Tracing:** [manifests/ui/tracing.yaml](manifests/ui/tracing.yaml) ships the
+  gateway's spans to the UI's telemetry collector, so every federated MCP call
+  shows up in the Tracing view with its target server, tool, and latency.
+- Skip the whole thing with `./setup.sh --no-ui` — nothing else depends on it.
+
 ---
 
 ## Repo map
@@ -186,7 +208,7 @@ reports allowed vs denied vs throttled per company.
 ```
 setup.sh                  build everything
 demo.sh                   six-act interactive walkthrough
-port-forward.sh           gateway :8080, Keycloak :8081, Prometheus :9090
+port-forward.sh           gateway :8080, Keycloak :8180, Prometheus :9090
 teardown.sh               remove it
 
 mcp-server/server.py      the stub MCP server — stdlib only, all six run this file
@@ -209,6 +231,8 @@ manifests/
   observability/
     01-metering-attributes.yaml
     02-prometheus.yaml
+  ui/
+    tracing.yaml            gateway spans → the UI's telemetry collector
 
 scripts/
   mcp.py                  MCP client: list, call, matrix, quota, token
@@ -246,7 +270,7 @@ produce the same invoice number, so a re-run of the demo looks identical.
 **Keycloak's issuer is pinned.** `KC_HOSTNAME` is set to the in-cluster service
 URL so tokens minted through `kubectl port-forward` still carry the in-cluster
 `iss` and are accepted by the gateway. Without it, a token fetched from your
-laptop would claim `iss=http://localhost:8081` and be rejected.
+laptop would claim `iss=http://localhost:8180` and be rejected.
 
 **Realms import at startup.** Adding a realm requires
 `kubectl rollout restart deploy/keycloak -n mcp-federation`.
@@ -280,6 +304,7 @@ Validated against:
 | Component | Version |
 | --- | --- |
 | Solo Enterprise agentgateway | `v2026.8.0` |
+| Solo Enterprise UI (management chart) | `0.5.4` |
 | Gateway API | `v1.5.0` |
 | Keycloak | `26.0` |
 | Prometheus | `v3.1.0` |

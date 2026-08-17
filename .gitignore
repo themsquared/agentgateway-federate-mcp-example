@@ -11,3 +11,4 @@ __pycache__/
 # Scratch output
 *.log
 /tmp/
+.ports.env

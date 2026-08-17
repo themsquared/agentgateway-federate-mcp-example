@@ -32,6 +32,10 @@ for the next one.
 
 **Pre-flight, five minutes before:** `scripts/mcp.py matrix` should print a full
 table. If it errors, your port-forwards dropped — restart `./port-forward.sh`.
+If you plan to show the UI (http://localhost:9080, `operator`/`operator`), make
+sure the one-time hosts entry is in place — port-forward.sh prints it if not —
+and log in *before* the audience arrives; OIDC first-login has a redirect dance
+you don't want to narrate.
 
 ---
 
@@ -181,6 +185,11 @@ What to point at:
   production rate card bills on successes only. Say this before they find it.
 
 Finish with `--csv` — this is the shape that goes into a billing pipeline.
+
+**UI beat (optional but strong):** open http://localhost:9080 → Tracing. The
+traffic you just generated is there as spans — every federated call with its
+target server, tool, and latency, no extra wiring. Same story as the metrics:
+the gateway is on the path, so observability is free.
 
 > **Expect: "can we bill on tokens or data volume instead of calls?"** The same
 > labels land on `agentgateway_requests_total` and `agentgateway_response_bytes_total`,

@@ -25,6 +25,14 @@ Both are hardcoded claim mappers on the client, because in this demo the realm
 *is* the company. In a real deployment they would come from directory attributes
 or group membership — nothing downstream changes.
 
+**`platform.json` is the exception — it is not a customer.** It is the platform
+*operator* realm backing login to the Solo Enterprise UI (the agentgateway
+dashboard): browser-login clients and a `Groups` claim instead of
+`company`/`tier`. The UI maps `Groups` to roles (`admins` → `global.Admin`,
+`readers` → `global.Reader`). Demo login: `operator` / `operator`. In production
+this realm is your corporate IdP. Keycloak's importer rejects unknown JSON
+fields, so notes like this live here rather than in the realm files.
+
 A realm here is only a stand-in for the partner's real identity provider. See
 [ONBOARDING.md](../../../ONBOARDING.md) for pointing the gateway at a partner's
 own Okta, Entra, or Auth0 tenant instead, which is the usual production shape.
