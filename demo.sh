@@ -119,17 +119,31 @@ settle() { sleep "${1:-6}"; }
 # Preflight
 ###############################################################################
 preflight() {
-  # Check all three up front. Act 5 depends on Prometheus, and discovering that
-  # forty minutes into a customer demo is not the moment to find out.
+  # Check all three up front — and check they are the RIGHT services, not just
+  # that something answers. A stale port-forward from another project on the
+  # same port answers with a 404, and a preflight that accepts any HTTP
+  # response would then let the reset below tear down policies while every
+  # later step talks to the wrong backend. (This happened. Once.)
   local failed=""
-  curl -s -o /dev/null --max-time 5 "${KEYCLOAK_URL}/realms/acme"   || failed="${failed}\n  Keycloak    ${KEYCLOAK_URL}"
-  curl -s -o /dev/null --max-time 5 "${GATEWAY_URL}/mcp/billing"    || failed="${failed}\n  MCP gateway ${GATEWAY_URL}"
-  curl -s -o /dev/null --max-time 5 "${PROMETHEUS_URL}/-/ready"     || failed="${failed}\n  Prometheus  ${PROMETHEUS_URL}"
+  # Keycloak: the acme realm endpoint returns JSON naming the realm.
+  curl -sf --max-time 5 "${KEYCLOAK_URL}/realms/acme" 2>/dev/null | grep -q '"realm":"acme"' \
+    || failed="${failed}\n  Keycloak     ${KEYCLOAK_URL}  (expected the 'acme' realm to answer)"
+  # Gateway: unauthenticated POST to a federated route must reach agentgateway —
+  # 401 (authn on) and 200 (authn not yet applied) are both ours; 404 is not.
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "${GATEWAY_URL}/mcp/billing" \
+           -H 'Content-Type: application/json' -d '{}' 2>/dev/null) || code=000
+  case "$code" in 200|202|400|401|406|415|429) ;; *)
+    failed="${failed}\n  MCP gateway  ${GATEWAY_URL}  (got HTTP ${code} from /mcp/billing — wrong service?)" ;;
+  esac
+  curl -sf -o /dev/null --max-time 5 "${PROMETHEUS_URL}/-/ready" 2>/dev/null \
+    || failed="${failed}\n  Prometheus   ${PROMETHEUS_URL}"
   if [ -n "$failed" ]; then
     echo ""
-    echo -e "${RED}Cannot reach:${NC}${failed}"
+    echo -e "${RED}Preflight failed:${NC}${failed}"
     echo ""
     echo -e "${DIM}Start the port-forwards in another terminal:${NC}  ./port-forward.sh"
+    echo -e "${DIM}If you run them on other ports, export GATEWAY_URL / KEYCLOAK_URL / PROMETHEUS_URL to match.${NC}"
     echo ""
     exit 1
   fi
