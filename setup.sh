@@ -237,10 +237,11 @@ kubectl apply -f "${MANIFESTS}/observability/"
 if [ "$INSTALL_UI" = "true" ] && [ "$SKIP_INSTALL" = "false" ]; then
   header "Solo Enterprise UI (management chart ${UI_VERSION})"
 
-  # The UI backend does OIDC discovery against the platform realm at startup, so
-  # Keycloak must be answering before the chart's pods come up.
-  info "Waiting for Keycloak (the UI logs in against the 'platform' realm)..."
-  kubectl rollout status deploy/keycloak -n "${DEMO_NS}" --timeout=300s >/dev/null
+  # No wait-for-Keycloak here on purpose. The UI backend retries OIDC discovery
+  # against the platform realm until it answers, so installing in parallel with
+  # Keycloak's first boot is safe — and on a fresh cluster with cold image
+  # caches, serializing on Keycloak here is exactly where a first run stalls.
+  # The readiness section below is what actually gates on everything being up.
 
   # Agentgateway product only — no kagent, no mesh. istio.ambient is disabled
   # because this cluster runs no mesh; leaving it on labels pods for a dataplane
@@ -280,16 +281,35 @@ fi
 ###############################################################################
 header "Waiting for everything to come up"
 
+# A readiness timeout must fail LOUDLY. Under `set -e` a bare `kubectl rollout
+# status` timeout would kill the script mid-sentence with one cryptic line and
+# skip everything after it — including this section's remaining checks and the
+# final instructions. Print what is actually wrong and say the script is safe to
+# re-run (it is idempotent; a re-run picks up where the images left off).
+wait_ready() {
+  local kind_name=$1 ns=$2 timeout=$3 label=$4
+  if kubectl rollout status "$kind_name" -n "$ns" --timeout="$timeout" >/dev/null 2>&1; then
+    ok "$label"
+  else
+    err "$label did not become ready within ${timeout}."
+    kubectl get pods -n "$ns" 2>/dev/null | sed 's/^/    /'
+    echo ""
+    err "First runs pull several images; on slow links a wait can expire before"
+    err "the pull finishes. setup.sh is idempotent — re-run it to resume."
+    exit 1
+  fi
+}
+
 info "MCP servers..."
 for d in payments invoicing reporting telemetry tickets crm; do
-  kubectl rollout status "deploy/mcp-${d}" -n "${DEMO_NS}" --timeout=180s >/dev/null && ok "mcp-${d}"
+  wait_ready "deploy/mcp-${d}" "${DEMO_NS}" 300s "mcp-${d}"
 done
 
-info "Keycloak (realm import takes a moment)..."
-kubectl rollout status deploy/keycloak -n "${DEMO_NS}" --timeout=300s >/dev/null && ok "keycloak"
+info "Keycloak (first boot pulls the image and imports four realms)..."
+wait_ready deploy/keycloak "${DEMO_NS}" 600s "keycloak"
 
 info "Prometheus..."
-kubectl rollout status deploy/prometheus -n "${DEMO_NS}" --timeout=180s >/dev/null && ok "prometheus"
+wait_ready deploy/prometheus "${DEMO_NS}" 300s "prometheus"
 
 info "Gateway (the proxy is created by the controller once the Gateway is accepted)..."
 DEADLINE=$((SECONDS + 240))
@@ -306,12 +326,15 @@ until kubectl get gateway mcp-federation-gateway -n "${DEMO_NS}" \
 done
 ok "gateway programmed"
 
-kubectl rollout status deploy/mcp-federation-gateway -n "${DEMO_NS}" --timeout=180s >/dev/null
-ok "gateway proxy running"
+wait_ready deploy/mcp-federation-gateway "${DEMO_NS}" 300s "gateway proxy"
 
 if [ "$INSTALL_UI" = "true" ] && kubectl get deploy solo-enterprise-ui -n "${AGW_NS}" >/dev/null 2>&1; then
-  info "Solo Enterprise UI (ClickHouse first boot takes a couple of minutes)..."
-  kubectl rollout status deploy/solo-enterprise-ui -n "${AGW_NS}" --timeout=420s >/dev/null && ok "UI running"
+  # Generous on purpose: on a completely cold cluster ClickHouse's first boot
+  # can take 10+ minutes, and the UI backend crash-loops (by design) until it
+  # answers. Measured ~11 minutes on a fresh k3d cluster; the stack self-heals,
+  # so even a timeout here resolves itself — wait_ready's re-run advice stands.
+  info "Solo Enterprise UI (ClickHouse first boot can take ~10 minutes on a cold cluster)..."
+  wait_ready deploy/solo-enterprise-ui "${AGW_NS}" 900s "UI"
 fi
 
 ###############################################################################
