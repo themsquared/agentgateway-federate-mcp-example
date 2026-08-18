@@ -121,6 +121,22 @@ forward() {
   echo -e "  ${GREEN}✓${NC} ${label}  ${CYAN}http://localhost:${local_port}${NC}"
 }
 
+# Cluster reachability first: when Docker (or the k3d VM) is down, kubectl's own
+# error is "connection to the server ... was refused", which reads like a
+# port-forward problem when it is really "there is no cluster right now".
+if ! kubectl get ns "$NS" >/dev/null 2>&1; then
+  echo ""
+  echo -e "${RED}Cannot reach the cluster${NC} (kubectl context: $(kubectl config current-context 2>/dev/null || echo '?'))."
+  if ! docker info >/dev/null 2>&1; then
+    echo -e "  ${DIM}Docker is not running — start Docker Desktop, then:${NC}  k3d cluster start mcp-federation"
+  else
+    echo -e "  ${DIM}Docker is up but the cluster is not answering. Try:${NC}  k3d cluster start mcp-federation"
+    echo -e "  ${DIM}Or the context points elsewhere:${NC}  kubectl config use-context k3d-mcp-federation"
+  fi
+  echo ""
+  exit 1
+fi
+
 # The UI is optional (setup.sh --no-ui skips it). Only forward it when present.
 UI_INSTALLED=false
 kubectl get svc solo-enterprise-ui -n "${AGW_NS}" >/dev/null 2>&1 && UI_INSTALLED=true
